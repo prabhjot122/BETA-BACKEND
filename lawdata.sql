@@ -18,16 +18,18 @@ COLLATE utf8mb4_unicode_ci;
 
 USE lawvriksh_referral;
 
--- Set optimal MySQL settings for performance
-SET GLOBAL innodb_buffer_pool_size = 1073741824;     -- 1GB buffer pool
-SET GLOBAL innodb_log_file_size = 268435456;         -- 256MB log file
-SET GLOBAL innodb_flush_log_at_trx_commit = 2;       -- Better performance
-SET GLOBAL innodb_flush_method = O_DIRECT;           -- Avoid double buffering
-SET GLOBAL max_connections = 1000;                   -- Support high concurrency
-SET GLOBAL query_cache_size = 268435456;             -- 256MB query cache
-SET GLOBAL query_cache_type = ON;
-SET GLOBAL thread_cache_size = 100;
-SET GLOBAL table_open_cache = 4000;
+-- MySQL Performance Settings
+-- Note: These settings should be configured in my.cnf file for production
+-- Removing all SET GLOBAL statements to avoid read-only variable errors
+--
+-- Recommended my.cnf settings:
+-- [mysqld]
+-- innodb_buffer_pool_size = 1G
+-- innodb_log_file_size = 256M
+-- innodb_flush_log_at_trx_commit = 2
+-- max_connections = 1000
+-- thread_cache_size = 100
+-- table_open_cache = 4000
 
 -- Drop existing tables in correct order (foreign key dependencies)
 DROP TABLE IF EXISTS email_queue;
@@ -44,9 +46,11 @@ DROP VIEW IF EXISTS v_leaderboard_fast;
 -- -----------------------------------------------------
 -- User and Privilege Management
 -- -----------------------------------------------------
-DROP USER IF EXISTS 'lawuser'@'%';
-CREATE USER 'lawuser'@'%' IDENTIFIED BY 'lawpass123';
-GRANT ALL PRIVILEGES ON lawvriksh_referral.* TO 'lawuser'@'%';
+-- User management - Using existing root user from your .env configuration
+-- DROP USER IF EXISTS 'lawuser'@'%';
+-- CREATE USER 'lawuser'@'%' IDENTIFIED BY 'lawpass123';
+-- GRANT ALL PRIVILEGES ON lawvriksh_referral.* TO 'lawuser'@'%';
+-- Note: Using existing root user with password from .env file
 FLUSH PRIVILEGES;
 
 -- =====================================================
@@ -82,17 +86,14 @@ CREATE TABLE users (
     -- Composite index for ranking queries (most critical for performance)
     INDEX idx_users_ranking_composite (is_admin, total_points DESC, created_at ASC, id),
 
-    -- Covering index for leaderboard queries
-    INDEX idx_users_leaderboard_covering (is_admin, total_points DESC, created_at ASC)
-        INCLUDE (id, name, shares_count, default_rank, current_rank),
+    -- Covering index for leaderboard queries (MySQL compatible - no INCLUDE clause)
+    INDEX idx_users_leaderboard_covering (is_admin, total_points DESC, created_at ASC, id, name, shares_count, default_rank, current_rank)
 
-    -- Partial indexes for active users only (smaller, faster)
-    INDEX idx_users_active_email (email) WHERE is_active = TRUE,
-    INDEX idx_users_active_points (total_points DESC, created_at ASC)
-        WHERE is_admin = FALSE AND is_active = TRUE,
-
-    -- Functional index for case-insensitive email lookups
-    INDEX idx_users_email_lower ((LOWER(email)))
+    -- Note: MySQL doesn't support partial indexes with WHERE clauses or functional indexes
+    -- These would need to be implemented at the application level if needed
+    -- INDEX idx_users_active_email (email) WHERE is_active = TRUE,  -- Not supported in MySQL
+    -- INDEX idx_users_active_points (total_points DESC, created_at ASC) WHERE is_admin = FALSE AND is_active = TRUE,  -- Not supported in MySQL
+    -- INDEX idx_users_email_lower ((LOWER(email)))  -- Not supported in standard MySQL
 
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -117,7 +118,7 @@ CREATE TABLE user_stats (
 CREATE TABLE share_events (
     id INT AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL,
-    platform ENUM('twitter', 'facebook', 'linkedin', 'instagram', 'whatsapp') NOT NULL,
+    platform ENUM('facebook', 'twitter', 'linkedin', 'instagram') NOT NULL,
     points_earned INT NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -137,20 +138,34 @@ CREATE TABLE share_events (
 -- =====================================================
 CREATE TABLE email_queue (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    user_email VARCHAR(100) NOT NULL,
-    user_name VARCHAR(100) NOT NULL,
-    email_type ENUM('welcome', 'campaign_day_1', 'campaign_day_3', 'campaign_day_7', 'campaign_day_14', 'campaign_day_30') NOT NULL,
-    status ENUM('pending', 'sent', 'failed') NOT NULL DEFAULT 'pending',
-    scheduled_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    sent_at TIMESTAMP NULL,
+
+    -- Email details
+    user_email VARCHAR(255) NOT NULL,
+    user_name VARCHAR(255) NOT NULL,
+    email_type ENUM('welcome', 'search_engine', 'portfolio_builder', 'platform_complete') NOT NULL,
+
+    -- Email content (optional - can be generated from templates)
+    subject VARCHAR(500) NULL,
+    body TEXT NULL,
+
+    -- Scheduling and status
+    scheduled_time TIMESTAMP NOT NULL,
+    status ENUM('pending', 'processing', 'sent', 'failed', 'cancelled') NOT NULL DEFAULT 'pending',
+
+    -- Retry and error handling
+    retry_count INT NOT NULL DEFAULT 0,
+    max_retries INT NOT NULL DEFAULT 3,
     error_message TEXT NULL,
+
+    -- Timestamps
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    sent_at TIMESTAMP NULL,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
     -- Performance indexes for fast email processing
     INDEX idx_email_queue_status_scheduled (status, scheduled_time),
-    INDEX idx_email_queue_user_email_type (user_email, email_type),
-    INDEX idx_email_queue_type_status (email_type, status),
+    INDEX idx_email_queue_user_email (user_email),
+    INDEX idx_email_queue_email_type (email_type),
     INDEX idx_email_queue_scheduled_time (scheduled_time),
     INDEX idx_email_queue_status (status),
     INDEX idx_email_queue_created_at (created_at)
@@ -161,18 +176,41 @@ CREATE TABLE email_queue (
 -- =====================================================
 CREATE TABLE feedback (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    user_id INT NOT NULL,
-    feedback_text TEXT NOT NULL,
-    rating INT CHECK (rating >= 1 AND rating <= 5),
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    -- User identification (optional - can be anonymous)
+    user_id INT NULL,
+    ip_address VARCHAR(45) NULL,
+    user_agent TEXT NULL,
+
+    -- Contact information
+    email VARCHAR(255) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+
+    -- Multiple choice responses
+    biggest_hurdle ENUM('A', 'B', 'C', 'D', 'E') NOT NULL,
+    biggest_hurdle_other TEXT NULL,
+    primary_motivation ENUM('A', 'B', 'C', 'D') NULL,
+    time_consuming_part ENUM('A', 'B', 'C', 'D') NULL,
+    professional_fear ENUM('A', 'B', 'C', 'D') NOT NULL,
+
+    -- Short answer responses (2-4 sentences each)
+    monetization_considerations TEXT NULL,
+    professional_legacy TEXT NULL,
+    platform_impact TEXT NOT NULL,
+
+    -- Metadata
+    submitted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
 
     -- Performance indexes
     INDEX idx_feedback_user_id (user_id),
-    INDEX idx_feedback_rating (rating),
-    INDEX idx_feedback_created_at (created_at)
+    INDEX idx_feedback_submitted_at (submitted_at),
+    INDEX idx_feedback_biggest_hurdle (biggest_hurdle),
+    INDEX idx_feedback_primary_motivation (primary_motivation),
+    INDEX idx_feedback_professional_fear (professional_fear),
+    INDEX idx_feedback_time_consuming_part (time_consuming_part)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- =====================================================
@@ -411,11 +449,12 @@ END//
 DELIMITER ;
 
 -- These inserts will now fire the trigger correctly.
+-- Using current point values from share_service.py: twitter=25, instagram=30, linkedin=50, facebook=35
 INSERT INTO share_events (user_id, platform, points_earned) VALUES
-(1, 'twitter', 1), (1, 'facebook', 3), (1, 'linkedin', 5),
-(2, 'instagram', 2), (2, 'twitter', 1),
-(4, 'facebook', 3), (4, 'linkedin', 5), (4, 'instagram', 2), (4, 'twitter', 1),
-(5, 'facebook', 3), (5, 'linkedin', 5);
+(1, 'twitter', 25), (1, 'facebook', 35), (1, 'linkedin', 50),
+(2, 'instagram', 30), (2, 'twitter', 25),
+(4, 'facebook', 35), (4, 'linkedin', 50), (4, 'instagram', 30), (4, 'twitter', 25),
+(5, 'facebook', 35), (5, 'linkedin', 50);
 
 -- =====================================================
 -- VIEWS - Performance Optimized

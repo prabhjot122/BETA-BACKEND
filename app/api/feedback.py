@@ -14,10 +14,11 @@ from app.core.security import get_current_admin, verify_access_token
 from app.models.feedback import Feedback
 from app.models.user import User
 from app.schemas.feedback import (
-    FeedbackCreate, FeedbackResponse, FeedbackListResponse, 
+    FeedbackCreate, FeedbackResponse, FeedbackListResponse,
     FeedbackStatsResponse, FeedbackSubmitResponse, FeedbackFilters,
     ExportFormat, HURDLE_LABELS, MOTIVATION_LABELS, TIME_CONSUMING_LABELS, FEAR_LABELS
 )
+from app.services.email_service import send_feedback_thank_you_email
 
 router = APIRouter(prefix="/feedback", tags=["feedback"])
 logger = logging.getLogger(__name__)
@@ -76,9 +77,20 @@ async def submit_feedback(
         db.add(feedback)
         db.commit()
         db.refresh(feedback)
-        
+
         logger.info(f"Feedback submitted successfully. ID: {feedback.id}, User ID: {user_id}, IP: {client_ip}")
-        
+
+        # Send thank you email immediately after successful feedback submission
+        try:
+            email_sent = send_feedback_thank_you_email(feedback_data.email, feedback_data.name)
+            if email_sent:
+                logger.info(f"Thank you email sent successfully to {feedback_data.email} for feedback ID: {feedback.id}")
+            else:
+                logger.warning(f"Failed to send thank you email to {feedback_data.email} for feedback ID: {feedback.id}")
+        except Exception as email_error:
+            # Log the error but don't fail the feedback submission
+            logger.error(f"Error sending thank you email to {feedback_data.email} for feedback ID: {feedback.id}: {str(email_error)}")
+
         return FeedbackSubmitResponse(
             success=True,
             message="Feedback submitted successfully. Thank you for your valuable insights!",
