@@ -18,12 +18,12 @@ def get_engine():
     if engine is None:
         try:
             logger.info("Initializing database engine...")
-            # Enhanced database connection pooling configuration
+            # Enhanced database connection pooling configuration for high concurrency
             engine = create_engine(
                 settings.database_url,
-                # Connection pool settings for 40-60% performance improvement
-                pool_size=20,                    # Increased from default 5
-                max_overflow=30,                 # Allow up to 50 total connections
+                # Connection pool settings for high-load production performance
+                pool_size=100,                   # Increased for 8 workers * ~12 connections each
+                max_overflow=200,                # Allow up to 300 total connections
                 pool_pre_ping=True,              # Verify connections before use
                 pool_recycle=3600,               # Recycle connections every hour
                 pool_timeout=30,                 # Wait up to 30 seconds for connection

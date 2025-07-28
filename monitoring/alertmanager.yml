@@ -1,0 +1,235 @@
+# AlertManager Configuration for LawVriksh Application
+# ==================================================
+#
+# This configuration defines how alerts are routed, grouped,
+# and delivered to various notification channels.
+
+global:
+  # Global SMTP configuration for email alerts
+  smtp_smarthost: 'localhost:587'
+  smtp_from: 'alerts@lawvriksh.com'
+  smtp_auth_username: 'alerts@lawvriksh.com'
+  smtp_auth_password: 'your-email-password'
+  smtp_require_tls: true
+
+# Templates for alert notifications
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# Route configuration
+route:
+  # Root route - all alerts start here
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 1h
+  receiver: 'web.hook'
+  
+  # Sub-routes for different alert types
+  routes:
+    # Critical alerts - immediate notification
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      group_wait: 0s
+      group_interval: 5m
+      repeat_interval: 15m
+      
+    # Performance alerts - grouped notifications
+    - match:
+        service: lawvriksh-api
+      receiver: 'performance-alerts'
+      group_by: ['alertname', 'endpoint']
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 30m
+      
+    # Database alerts
+    - match:
+        service: database
+      receiver: 'database-alerts'
+      group_by: ['alertname', 'table']
+      group_wait: 15s
+      group_interval: 5m
+      repeat_interval: 20m
+      
+    # Cache alerts
+    - match:
+        service: cache
+      receiver: 'cache-alerts'
+      group_by: ['alertname', 'cache_type']
+      group_wait: 30s
+      group_interval: 10m
+      repeat_interval: 1h
+      
+    # Business metric alerts
+    - match:
+        service: business
+      receiver: 'business-alerts'
+      group_wait: 1m
+      group_interval: 15m
+      repeat_interval: 2h
+      
+    # System resource alerts
+    - match:
+        service: system
+      receiver: 'system-alerts'
+      group_wait: 30s
+      group_interval: 10m
+      repeat_interval: 1h
+
+# Inhibition rules - suppress certain alerts when others are firing
+inhibit_rules:
+  # Suppress non-critical alerts when critical alerts are firing
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'cluster', 'service']
+    
+  # Suppress individual endpoint alerts when application is down
+  - source_match:
+      alertname: 'ApplicationDown'
+    target_match_re:
+      alertname: '(HighResponseTime|HighErrorRate|LowSuccessRate)'
+    equal: ['service']
+
+# Receivers - define how to send notifications
+receivers:
+  # Default webhook receiver
+  - name: 'web.hook'
+    webhook_configs:
+      - url: 'http://localhost:5001/webhook'
+        send_resolved: true
+        http_config:
+          basic_auth:
+            username: 'webhook-user'
+            password: 'webhook-password'
+
+  # Critical alerts - multiple channels
+  - name: 'critical-alerts'
+    email_configs:
+      - to: 'admin@lawvriksh.com'
+        subject: '🚨 CRITICAL: {{ .GroupLabels.alertname }} - LawVriksh'
+        body: |
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Severity: {{ .Labels.severity }}
+          Service: {{ .Labels.service }}
+          Started: {{ .StartsAt }}
+          {{ end }}
+        headers:
+          Priority: 'high'
+    
+    # Slack notification for critical alerts
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#alerts-critical'
+        title: '🚨 Critical Alert - LawVriksh'
+        text: |
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Service:* {{ .Labels.service }}
+          *Severity:* {{ .Labels.severity }}
+          {{ end }}
+        send_resolved: true
+    
+    # PagerDuty for critical alerts (optional)
+    pagerduty_configs:
+      - routing_key: 'your-pagerduty-integration-key'
+        description: '{{ .GroupLabels.alertname }} - LawVriksh Critical Alert'
+
+  # Performance alerts
+  - name: 'performance-alerts'
+    email_configs:
+      - to: 'devops@lawvriksh.com'
+        subject: '⚡ Performance Alert: {{ .GroupLabels.alertname }}'
+        body: |
+          Performance issue detected in LawVriksh application:
+          
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Endpoint: {{ .Labels.endpoint }}
+          Version: {{ .Labels.version }}
+          Started: {{ .StartsAt }}
+          {{ end }}
+          
+          Please investigate and optimize as needed.
+    
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#alerts-performance'
+        title: '⚡ Performance Alert'
+        text: |
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Endpoint:* {{ .Labels.endpoint }} ({{ .Labels.version }})
+          *Description:* {{ .Annotations.description }}
+          {{ end }}
+
+  # Database alerts
+  - name: 'database-alerts'
+    email_configs:
+      - to: 'dba@lawvriksh.com'
+        subject: '🗄️ Database Alert: {{ .GroupLabels.alertname }}'
+        body: |
+          Database issue detected:
+          
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Table: {{ .Labels.table }}
+          Operation: {{ .Labels.operation }}
+          Started: {{ .StartsAt }}
+          {{ end }}
+
+  # Cache alerts
+  - name: 'cache-alerts'
+    email_configs:
+      - to: 'devops@lawvriksh.com'
+        subject: '💾 Cache Alert: {{ .GroupLabels.alertname }}'
+        body: |
+          Cache performance issue:
+          
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Cache Type: {{ .Labels.cache_type }}
+          Started: {{ .StartsAt }}
+          {{ end }}
+
+  # Business alerts
+  - name: 'business-alerts'
+    email_configs:
+      - to: 'business@lawvriksh.com'
+        subject: '📊 Business Metric Alert: {{ .GroupLabels.alertname }}'
+        body: |
+          Business metric anomaly detected:
+          
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Started: {{ .StartsAt }}
+          {{ end }}
+
+  # System alerts
+  - name: 'system-alerts'
+    email_configs:
+      - to: 'sysadmin@lawvriksh.com'
+        subject: '🖥️ System Alert: {{ .GroupLabels.alertname }}'
+        body: |
+          System resource issue:
+          
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Started: {{ .StartsAt }}
+          {{ end }}
+
+# Notification templates
+templates:
+  - '/etc/alertmanager/templates/email.tmpl'
+  - '/etc/alertmanager/templates/slack.tmpl'

@@ -4,10 +4,12 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from sqlalchemy import text
-from app.api import auth, users, shares, leaderboard, admin, campaigns, feedback, async_leaderboard, email_queue
+from app.api import auth, users, shares, leaderboard, admin, campaigns, feedback, async_leaderboard, email_queue, async_auth, ultra_fast_auth
 from app.services.background_email_processor import start_background_email_processor, stop_background_email_processor
 from app.utils.monitoring import prometheus_middleware, prometheus_endpoint
 from app.core.error_handlers import setup_error_handlers, RateLimitError
+from app.core.metrics import get_metrics, get_metrics_content_type, metrics
+from app.middleware.prometheus_middleware import PrometheusMiddleware
 from app.core.config import settings
 from app.utils.optimized_rate_limiter import optimized_rate_limiter
 from app.utils.ultra_fast_rate_limiter import ultra_fast_rate_limiter
@@ -173,14 +175,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Prometheus monitoring middleware
-prometheus_middleware(app)
+# Enhanced Prometheus monitoring middleware
+app.add_middleware(PrometheusMiddleware, app_name="lawvriksh-api")
 
 # Add compression middleware for 60-80% smaller payloads (temporarily disabled due to content-length issues)
 # app.middleware("http")(compression_middleware)
 
 # Routers
-app.include_router(auth.router)
+app.include_router(auth.router)  # Original sync auth endpoints
+app.include_router(async_auth.router)  # Async auth endpoints for 2-3x performance
+app.include_router(ultra_fast_auth.router)  # Ultra-fast auth endpoints for sub-second performance
 app.include_router(users.router)
 app.include_router(shares.router)
 app.include_router(leaderboard.router)
@@ -193,6 +197,15 @@ app.include_router(email_queue.router)  # Email queue management API
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
+
+@app.get("/metrics")
+async def get_prometheus_metrics():
+    """Prometheus metrics endpoint."""
+    metrics_data = get_metrics()
+    return Response(
+        content=metrics_data,
+        media_type=get_metrics_content_type()
+    )
 
 @app.get("/performance-stats")
 def get_performance_stats():

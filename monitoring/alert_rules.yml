@@ -1,0 +1,268 @@
+# Prometheus Alert Rules for LawVriksh Application
+# ===============================================
+#
+# These rules define alerts for performance degradation, errors,
+# and system health issues in the LawVriksh application.
+
+groups:
+  # Application Performance Alerts
+  - name: lawvriksh_performance
+    rules:
+      # High response time alert
+      - alert: HighResponseTime
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="lawvriksh-api"}[5m])) > 1.0
+        for: 2m
+        labels:
+          severity: warning
+          service: lawvriksh-api
+        annotations:
+          summary: "High response time detected"
+          description: "95th percentile response time is {{ $value }}s for endpoint {{ $labels.endpoint }}"
+
+      # Ultra-fast endpoints exceeding targets
+      - alert: UltraFastEndpointSlow
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="lawvriksh-api", version="ultra"}[5m])) > 0.5
+        for: 1m
+        labels:
+          severity: critical
+          service: lawvriksh-api
+        annotations:
+          summary: "Ultra-fast endpoint exceeding performance target"
+          description: "Ultra-fast endpoint {{ $labels.endpoint }} has 95th percentile response time of {{ $value }}s (target: <0.5s)"
+
+      # High error rate
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{job="lawvriksh-api", status_code=~"5.."}[5m]) / rate(http_requests_total{job="lawvriksh-api"}[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+          service: lawvriksh-api
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} for endpoint {{ $labels.endpoint }}"
+
+      # Low success rate (like the original 0.26% issue)
+      - alert: LowSuccessRate
+        expr: rate(http_requests_total{job="lawvriksh-api", status_code=~"2.."}[5m]) / rate(http_requests_total{job="lawvriksh-api"}[5m]) < 0.95
+        for: 1m
+        labels:
+          severity: critical
+          service: lawvriksh-api
+        annotations:
+          summary: "Low success rate detected - potential performance collapse"
+          description: "Success rate is {{ $value | humanizePercentage }} for endpoint {{ $labels.endpoint }} (target: >95%)"
+
+      # High request volume
+      - alert: HighRequestVolume
+        expr: rate(http_requests_total{job="lawvriksh-api"}[5m]) > 100
+        for: 5m
+        labels:
+          severity: warning
+          service: lawvriksh-api
+        annotations:
+          summary: "High request volume"
+          description: "Request rate is {{ $value }} requests/second"
+
+  # Database Performance Alerts
+  - name: lawvriksh_database
+    rules:
+      # Slow database queries
+      - alert: SlowDatabaseQueries
+        expr: histogram_quantile(0.95, rate(db_operation_duration_seconds_bucket{job="lawvriksh-api"}[5m])) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+          service: database
+        annotations:
+          summary: "Slow database queries detected"
+          description: "95th percentile database operation time is {{ $value }}s for {{ $labels.operation }} on {{ $labels.table }}"
+
+      # High database error rate
+      - alert: DatabaseErrors
+        expr: rate(db_operations_total{job="lawvriksh-api", status="error"}[5m]) / rate(db_operations_total{job="lawvriksh-api"}[5m]) > 0.01
+        for: 1m
+        labels:
+          severity: critical
+          service: database
+        annotations:
+          summary: "Database errors detected"
+          description: "Database error rate is {{ $value | humanizePercentage }} for {{ $labels.operation }} on {{ $labels.table }}"
+
+      # Database connection pool exhaustion
+      - alert: DatabaseConnectionPoolHigh
+        expr: db_connections_active{job="lawvriksh-api"} / db_connections_total{job="lawvriksh-api"} > 0.8
+        for: 2m
+        labels:
+          severity: warning
+          service: database
+        annotations:
+          summary: "Database connection pool usage high"
+          description: "Database connection pool is {{ $value | humanizePercentage }} full"
+
+  # Cache Performance Alerts
+  - name: lawvriksh_cache
+    rules:
+      # Low cache hit rate
+      - alert: LowCacheHitRate
+        expr: rate(cache_hits_total{job="lawvriksh-api"}[5m]) / (rate(cache_hits_total{job="lawvriksh-api"}[5m]) + rate(cache_misses_total{job="lawvriksh-api"}[5m])) < 0.8
+        for: 5m
+        labels:
+          severity: warning
+          service: cache
+        annotations:
+          summary: "Low cache hit rate"
+          description: "Cache hit rate is {{ $value | humanizePercentage }} for {{ $labels.cache_type }} (target: >80%)"
+
+      # Cache operation errors
+      - alert: CacheErrors
+        expr: rate(cache_operations_total{job="lawvriksh-api", status="error"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: cache
+        annotations:
+          summary: "Cache operation errors"
+          description: "Cache errors detected for {{ $labels.cache_type }}: {{ $value }} errors/second"
+
+      # High cache memory usage
+      - alert: HighCacheMemoryUsage
+        expr: cache_memory_usage_bytes{job="lawvriksh-api", cache_type="memory"} > 1073741824  # 1GB
+        for: 5m
+        labels:
+          severity: warning
+          service: cache
+        annotations:
+          summary: "High cache memory usage"
+          description: "Memory cache usage is {{ $value | humanizeBytes }}"
+
+  # Business Metrics Alerts
+  - name: lawvriksh_business
+    rules:
+      # Low user registration rate
+      - alert: LowUserRegistrations
+        expr: rate(user_registrations_total{job="lawvriksh-api", status="success"}[1h]) < 0.1
+        for: 30m
+        labels:
+          severity: warning
+          service: business
+        annotations:
+          summary: "Low user registration rate"
+          description: "User registration rate is {{ $value }} registrations/hour"
+
+      # High registration failure rate
+      - alert: HighRegistrationFailures
+        expr: rate(user_registrations_total{job="lawvriksh-api", status="error"}[5m]) / rate(user_registrations_total{job="lawvriksh-api"}[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+          service: business
+        annotations:
+          summary: "High user registration failure rate"
+          description: "Registration failure rate is {{ $value | humanizePercentage }}"
+
+      # Email processing issues
+      - alert: EmailProcessingErrors
+        expr: rate(email_operations_total{job="lawvriksh-api", status="error"}[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+          service: email
+        annotations:
+          summary: "Email processing errors"
+          description: "Email processing error rate: {{ $value }} errors/second for {{ $labels.email_type }}"
+
+  # System Resource Alerts
+  - name: lawvriksh_system
+    rules:
+      # High CPU usage
+      - alert: HighCPUUsage
+        expr: cpu_usage_percent{job="lawvriksh-api"} > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is {{ $value }}%"
+
+      # High memory usage
+      - alert: HighMemoryUsage
+        expr: memory_usage_bytes{job="lawvriksh-api", memory_type="used"} / memory_usage_bytes{job="lawvriksh-api", memory_type="total"} > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value | humanizePercentage }}"
+
+      # Application down
+      - alert: ApplicationDown
+        expr: up{job="lawvriksh-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: lawvriksh-api
+        annotations:
+          summary: "LawVriksh application is down"
+          description: "The LawVriksh API is not responding to health checks"
+
+  # Performance Regression Alerts
+  - name: lawvriksh_regression
+    rules:
+      # Performance regression compared to baseline
+      - alert: PerformanceRegression
+        expr: |
+          (
+            histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="lawvriksh-api"}[5m])) 
+            / 
+            histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="lawvriksh-api"}[1h] offset 1d))
+          ) > 2.0
+        for: 5m
+        labels:
+          severity: warning
+          service: lawvriksh-api
+        annotations:
+          summary: "Performance regression detected"
+          description: "Response time has increased by {{ $value }}x compared to yesterday for {{ $labels.endpoint }}"
+
+      # Cache performance degradation
+      - alert: CachePerformanceDegradation
+        expr: |
+          (
+            rate(cache_hits_total{job="lawvriksh-api"}[5m]) / 
+            (rate(cache_hits_total{job="lawvriksh-api"}[5m]) + rate(cache_misses_total{job="lawvriksh-api"}[5m]))
+          ) < 0.5 * (
+            rate(cache_hits_total{job="lawvriksh-api"}[1h] offset 1d) / 
+            (rate(cache_hits_total{job="lawvriksh-api"}[1h] offset 1d) + rate(cache_misses_total{job="lawvriksh-api"}[1h] offset 1d))
+          )
+        for: 10m
+        labels:
+          severity: warning
+          service: cache
+        annotations:
+          summary: "Cache performance degradation"
+          description: "Cache hit rate has dropped significantly for {{ $labels.cache_type }}"
+
+  # Recording Rules for Performance Optimization
+  - name: lawvriksh_recording_rules
+    interval: 30s
+    rules:
+      # Pre-calculate commonly used metrics
+      - record: lawvriksh:request_rate_5m
+        expr: rate(http_requests_total{job="lawvriksh-api"}[5m])
+
+      - record: lawvriksh:error_rate_5m
+        expr: rate(http_requests_total{job="lawvriksh-api", status_code=~"5.."}[5m]) / rate(http_requests_total{job="lawvriksh-api"}[5m])
+
+      - record: lawvriksh:response_time_p95_5m
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="lawvriksh-api"}[5m]))
+
+      - record: lawvriksh:cache_hit_rate_5m
+        expr: rate(cache_hits_total{job="lawvriksh-api"}[5m]) / (rate(cache_hits_total{job="lawvriksh-api"}[5m]) + rate(cache_misses_total{job="lawvriksh-api"}[5m]))
+
+      - record: lawvriksh:db_operation_rate_5m
+        expr: rate(db_operations_total{job="lawvriksh-api"}[5m])
+
+      - record: lawvriksh:user_registration_rate_1h
+        expr: rate(user_registrations_total{job="lawvriksh-api", status="success"}[1h])

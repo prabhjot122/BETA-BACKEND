@@ -44,12 +44,12 @@ logger = logging.getLogger(__name__)
 if ASYNC_SQLALCHEMY_AVAILABLE:
     try:
         async_engine = create_async_engine(
-            # Convert sync URL to async URL
-            settings.database_url.replace("mysql+pymysql://", "mysql+aiomysql://"),
+            # Convert sync URL to async URL using asyncmy driver
+            settings.database_url.replace("mysql+pymysql://", "mysql+asyncmy://"),
 
-            # Async connection pool settings for maximum performance
-            pool_size=20,                    # Reasonable pool size for async operations
-            max_overflow=30,                 # Allow up to 50 total connections
+            # Async connection pool settings for high-load production performance
+            pool_size=100,                   # Increased for 8 workers * ~12 connections each
+            max_overflow=200,                # Allow up to 300 total connections
             pool_pre_ping=True,              # Verify connections before use
             pool_recycle=3600,               # Recycle connections every hour
             pool_timeout=30,                 # Wait up to 30 seconds for connection
@@ -96,7 +96,7 @@ async def get_async_db() -> AsyncGenerator[Any, None]:
         AsyncSession: Async database session
     """
     if not ASYNC_SQLALCHEMY_AVAILABLE or AsyncSessionLocal is None:
-        raise RuntimeError("Async database features not available. Please install aiomysql: pip install aiomysql")
+        raise RuntimeError("Async database features not available. Please install asyncmy: pip install asyncmy")
 
     async with AsyncSessionLocal() as session:
         try:
